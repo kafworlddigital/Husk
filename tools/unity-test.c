@@ -24,6 +24,7 @@
 #include "husk-tl-unity.h"
 #include "husk-tl-gamepad.h"
 #include "husk-tl-xmem.h"
+#include "host-control.h"
 #include "husk-tl-audio.h"
 
 static void dump_pushes(void);
@@ -316,10 +317,10 @@ static void *control_thread(void *arg)
 {
     const char *path = arg;
     for (;;) {
-        FILE *f = fopen(path, "r");
+        FILE *f = tl_host_control_open(path);
         if (!f) { sleep_ms(200); continue; }
         char line[512];
-        while (fgets(line, sizeof(line), f)) {
+        while (tl_host_control_line(f, line, sizeof(line))) {
             float a, b, c, d; long ms; char p[400];
             if (sscanf(line, "tap %f %f", &a, &b) == 2) { tl_unity_touch(0, 0, a, b); sleep_ms(60); tl_unity_touch(2, 0, a, b); }
             else if (sscanf(line, "hold %f %f %ld", &a, &b, &ms) == 3) { tl_unity_touch(0, 0, a, b); sleep_ms(ms); tl_unity_touch(2, 0, a, b); }
@@ -335,14 +336,14 @@ static void *control_thread(void *arg)
                 if (sscanf(line + 4, "%x %f %f %f %f %f %f", &btn, &st.lx, &st.ly, &st.rx, &st.ry, &st.lt, &st.rt) >= 1) { st.buttons = btn; tl_pad_update(0, &st); }
             }
             else if (sscanf(line, "wait %ld", &ms) == 1) sleep_ms(ms);
-            else if (sscanf(line, "shot %399s", p) == 1) {
-                char cmd[900]; snprintf(cmd, sizeof(cmd), "sips -s format png '%s/latest.bmp' --out '%s' >/dev/null 2>&1", g_frame_dir, p);
-                if (system(cmd)) fprintf(stderr, "ctl: shot failed\n");
+            else if (tl_host_shot_path(line, p, sizeof(p))) {
+                if (!p[0] || tl_host_screenshot(g_frame_dir, p)) fprintf(stderr, "ctl: shot failed\n");
                 else fprintf(stderr, "ctl: shot %s (frame %lu)\n", p, tl_unity_frames());
             }
             else if (!strncmp(line, "quit", 4)) { fprintf(stderr, "ctl: quit\n"); fflush(stderr); _exit(0); }
         }
         fclose(f);
+        sleep_ms(200); /* Avoid spinning while a FIFO has no writer. */
     }
     return NULL;
 }

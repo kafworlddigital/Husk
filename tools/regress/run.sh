@@ -8,9 +8,13 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; R="$(cd "$HERE/../.." && pwd)"
 OUT="${HUSK_REGRESS_OUT:-/tmp/husk-regress}"; CACHE="${HUSK_REGRESS_CACHE:-$HOME/Library/Caches/husk-regress}"
+. "$HERE/control-files.sh"
 UPDATE=0; [ "${1:-}" = "--update" ] && { UPDATE=1; shift; }
 ONLY=" $* "
-mkdir -p "$OUT" "$CACHE"
+OUT=$(husk_regress_prepare_out "$OUT") || exit 1
+mkdir -p "$CACHE"
+husk_regress_control_init || exit 1
+trap 'rm -rf -- "$HUSK_REGRESS_CONTROL_DIR"' EXIT
 
 expand() { eval echo "$1"; }
 
@@ -42,8 +46,11 @@ while IFS='|' read -r name harness apk secs size env expect; do
         BUILT="$BUILT$harness "
     fi
 
-    shot="$OUT/$name.png"; log="$OUT/$name.log"; ctl="$OUT/$name.ctl"; rm -f "$shot"
-    printf "wait %d\nshot %s\nquit\n" $((secs * 1000)) "$shot" > "$ctl"
+    shot="$OUT/$name.png"; log="$OUT/$name.log"; rm -f "$shot"
+    if ! ctl=$(husk_regress_control_write "$name" "$((secs * 1000))" "$shot"); then
+        printf "%-15s %-8s %s\n" "$name" "FAILED" "could not create private control file" | tee -a "$OUT/summary.txt"
+        fails=$((fails + 1)); continue
+    fi
     data=$(mktemp -d /tmp/husk-regress-data.XXXXXX)
     pkill -9 -x "$harness" 2>/dev/null
     ( cd "$OUT" && env TL_AUDIO_MUTE=1 TL_JNI_TRACE=0 TL_VERBOSE=0 TL_CTL="$ctl" TL_DATA="$data" $(expand "$env") \
